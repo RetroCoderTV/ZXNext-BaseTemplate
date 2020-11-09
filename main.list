@@ -1,0 +1,828 @@
+# file opened: src/main.asm
+  1   0000
+  2   0000                  OPT --syntax=abfw     ; recommended sub-syntax of current sjasmplus
+  3   0000                  ; "a" - multi-arguments for instructions require double-comma, i.e. `push hl,,de,,bc`
+  4   0000                  ;     - this helps to avoid common pitfalls like `sub a,a` becoming 2x `sub a` in default syntax
+  5   0000                  ;     - making it single "sub a from a" and enabling non-Zilog syntax `sub a,...`
+  6   0000                  ; "b" - whole expression parentheses are legal for memory access only
+  7   0000                  ;     - things like "ld b,(variable)" will become errors, as there's only ld b,immediate
+  8   0000                  ;     - for regular expression parentheses you can disambiguate `ld b,+(1+2+3)` by unary +
+  9   0000                  ; "f" - warn about fake instructions of sjasmplus (if used by accident)
+ 10   0000                  ;     - to use them intentionally, use comment to suppress warning: `ld hl,de ; fake`
+ 11   0000                  ;     - one extra warning from this class is Z80N extension `mul`, requiring explicit argument `mul de` or `mul d,e`
+ 12   0000                  ; "w" - report warnings as errors
+ 13   0000
+ 14   0000                  org 0x8000
+ 15   8000
+ 16   8000                  DEVICE ZXSPECTRUMNEXT
+ 17   8000              	CSPECTMAP main.map
+ 18   8000
+ 19   8000
+ 20   8000              start:
+ 21   8000 F3           	di
+ 22   8001 31 FE 7F     	ld sp,$7ffe
+ 23   8004 ED 91 07 03  	nextreg $7,3 ;set Mhz mode (3=28mhz)
+ 24   8008 CD E4 81     	call game_init
+ 25   800B C3 0E 80     	jp main_loop
+ 26   800E
+ 27   800E              main_loop:
+ 28   800E
+ 29   800E CD 04 82     	call game_update
+ 30   8011 CD 1B 82     	call game_draw
+ 31   8014
+ 32   8014 C3 0E 80     	jp main_loop
+ 33   8017
+ 34   8017
+ 35   8017
+ 36   8017
+ 37   8017              STACK_SIZE equ 20
+ 38   8017 00 00 00...  stack_bottom ds STACK_SIZE, 0
+ 39   802B 00           stack_top db 0
+ 40   802C
+ 41   802C              	include 'retrotools\constants.asm'
+# file opened: src/retrotools/constants.asm
+  1+  802C              FALSE equ 0
+  2+  802C              TRUE equ 1
+  3+  802C
+  4+  802C              DEAD equ 0
+  5+  802C              ALIVE equ 1
+  6+  802C
+  7+  802C              NOT_VISIBLE equ 0
+  8+  802C              VISIBLE equ 1
+  9+  802C
+ 10+  802C              NOT_ENABLED equ 0
+ 11+  802C              ENABLED equ 1
+ 12+  802C
+ 13+  802C
+ 14+  802C              ;DIRECTIONS:
+ 15+  802C              LEFT equ 0
+ 16+  802C              RIGHT equ 1
+ 17+  802C              UP equ 2
+ 18+  802C              DOWN equ 3
+ 19+  802C
+ 20+  802C
+ 21+  802C              ;48k Screen
+ 22+  802C              SCREEN_WIDTH_CELLS equ 32
+ 23+  802C              SCREEN_HEIGHT_CELLS equ 24
+ 24+  802C
+ 25+  802C
+ 26+  802C
+ 27+  802C              ;Next Screen
+ 28+  802C              GUTTER equ 32
+ 29+  802C
+ 30+  802C
+ 31+  802C
+ 32+  802C
+ 33+  802C              END_OF_ARRAY equ 255
+ 34+  802C
+ 35+  802C
+ 36+  802C
+ 37+  802C
+ 38+  802C
+ 39+  802C
+ 40+  802C
+ 41+  802C
+ 42+  802C
+ 43+  802C
+# file closed: src/retrotools/constants.asm
+ 42   802C              	include 'retrotools\tools.asm'
+# file opened: src/retrotools/tools.asm
+  1+  802C              ;MACROS
+  2+  802C              	MACRO BREAKPOINT
+  3+  802C ~            		DW $01DD
+  4+  802C              	ENDM
+  5+  802C
+  6+  802C              	MACRO CLIPTILES x1,y1,x2,y2
+  7+  802C ~            		ld a,x1
+  8+  802C ~            		nextreg $1b,a
+  9+  802C ~            		ld a,y1
+ 10+  802C ~            		nextreg $1b,a
+ 11+  802C ~            		ld a,x2
+ 12+  802C ~            		nextreg $1b,a
+ 13+  802C ~            		ld a,y2
+ 14+  802C ~            		nextreg $1b,a
+ 15+  802C ~
+ 16+  802C              	ENDM
+ 17+  802C
+ 18+  802C              	MACRO CLIP_LAYER2 x1,x2,y1,y2
+ 19+  802C ~            		ld a,x1
+ 20+  802C ~            		nextreg $18,a
+ 21+  802C ~            		ld a,x2
+ 22+  802C ~            		nextreg $18,a
+ 23+  802C ~            		ld a,y1
+ 24+  802C ~            		nextreg $18,a
+ 25+  802C ~            		ld a,y2
+ 26+  802C ~            		nextreg $18,a
+ 27+  802C ~
+ 28+  802C              	ENDM
+ 29+  802C
+ 30+  802C
+ 31+  802C              	MACRO SUB_HL_A
+ 32+  802C ~            	neg
+ 32+  802C ~              add hl,a
+ 33+  802C              	ENDM
+ 34+  802C
+ 35+  802C
+ 36+  802C              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 37+  802C              ;; Wait for n clock cycles
+ 38+  802C              ;; Inputs: BC=n
+ 39+  802C              ;; Outputs: none
+ 40+  802C              ;; Destroys: A,BC
+ 41+  802C              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 42+  802C              wait:
+ 43+  802C 0B           	dec bc
+ 44+  802D 78           	ld a,b
+ 45+  802E FE 00        	cp 0
+ 46+  8030 C2 2C 80     	jp nz, wait
+ 47+  8033 C9           	ret
+ 48+  8034
+ 49+  8034
+ 50+  8034
+ 51+  8034              ;;;em00k wrote this;;;;
+ 52+  8034              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 53+  8034              ;; Wait for vertical blank
+ 54+  8034              ;; Inputs: B=frames delay count
+ 55+  8034              ;; Outputs:
+ 56+  8034              ;; Destroys:
+ 57+  8034              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 58+  8034              WaitRasterLine:
+ 59+  8034 CD 3A 80     	call RastererWait
+ 60+  8037 10 FB        	djnz WaitRasterLine
+ 61+  8039 C9           	ret
+ 62+  803A              RastererWait:
+ 63+  803A C5           	push bc
+ 64+  803B 1E 10        	ld e,16
+ 64+  803D 3E 1F          ld a,$1f
+ 64+  803F 01 3B 24       ld bc,$243b
+ 64+  8042 ED 79          out (c),a
+ 64+  8044 04             inc b
+ 65+  8045              WaitForLinea:
+ 66+  8045 ED 78        	in a,(c)
+ 66+  8047 BB             cp e
+ 66+  8048 20 FB          jr nz,WaitForLinea
+ 67+  804A C1           	pop bc
+ 68+  804B C9           	ret
+ 69+  804C
+ 70+  804C
+ 71+  804C
+ 72+  804C
+ 73+  804C
+ 74+  804C
+ 75+  804C
+ 76+  804C
+ 77+  804C
+ 78+  804C
+ 79+  804C
+ 80+  804C              LAYER2_ACCESS_PORT	EQU 	$123B
+ 81+  804C
+ 82+  804C              		;----------------
+ 83+  804C              		; Original code by Michael Ware adjustd to work with ZXB
+ 84+  804C              		; Plot tile to layer 2 (needs to accept > 256 tiles)
+ 85+  804C              		; in - hl = y/x tile coordinate (0-17, 0-31)
+ 86+  804C              		; in - a = number of tile to display
+ 87+  804C              		;----------------
+ 88+  804C              PlotTile8:
+ 89+  804C ED 91 56 11  		nextreg $56,17
+ 90+  8050
+ 91+  8050 16 40        		ld d,64
+ 92+  8052 5F           		ld e,a					; 11
+ 93+  8053 ED 30        		mul de
+ 94+  8055
+ 95+  8055 3E C0        		ld a,%11000000 			; this points to $c000
+ 96+  8057 B2           		or d		 			; 8
+ 97+  8058 EB           		ex de,hl				; 4			; cannot avoid an ex (de now = yx)
+ 98+  8059 67           		ld h,a					; 4
+ 99+  805A 7B           		ld a,e
+100+  805B 07           		rlca
+101+  805C 07           		rlca
+102+  805D 07           		rlca
+103+  805E 5F           		ld e,a					; 4+4+4+4+4 = 20	; mul x,8
+104+  805F 7A           		ld a,d
+105+  8060 07           		rlca
+106+  8061 07           		rlca
+107+  8062 07           		rlca
+108+  8063 57           		ld d,a					; 4+4+4+4+4 = 20	; mul y,8
+109+  8064 E6 C0        		and 192
+110+  8066 F6 03        		or 3					; or 3 to keep layer on				; 8
+111+  8068 01 3B 12     		ld bc,LAYER2_ACCESS_PORT
+112+  806B ED 79        		out (c),a      ; 21			; select bank
+113+  806D
+114+  806D 7A           		ld a,d
+115+  806E E6 3F        		and 63
+116+  8070 57           		ld d,a					; clear top 2 bits of y (dest) (4+4+4 = 12)
+117+  8071              		; T96 here
+118+  8071 3E 08        		ld a,8					; 7
+119+  8073              .plotTilesLoop2:
+120+  8073 D5           		push de					; 11
+121+  8074 ED A0        		ldi
+122+  8076 ED A0        		ldi
+123+  8078 ED A0        		ldi
+124+  807A ED A0        		ldi
+125+  807C ED A0        		ldi
+126+  807E ED A0        		ldi
+127+  8080 ED A0        		ldi
+128+  8082 ED A0        		ldi					; 8 * 16 = 128
+129+  8084
+130+  8084 D1           		pop de					; 11
+131+  8085 14           		inc d					; 4 add 256 for next line down
+132+  8086 3D           		dec a					; 4
+133+  8087 20 EA        		jr nz,.plotTilesLoop2			; 12/7
+134+  8089
+135+  8089 ED 91 56 0E  		nextreg $56,14 ;$0e
+136+  808D C9           		ret
+137+  808E
+138+  808E
+139+  808E
+140+  808E
+141+  808E
+142+  808E
+143+  808E              ; ;HL=mem address start yx
+144+  808E              ; ;DE=message address
+145+  808E              ; display_string:
+146+  808E              ;     ld a,(de)
+147+  808E              ;     cp 0
+148+  808E              ;     ret z
+149+  808E              ;     cp ' '
+150+  808E              ;     jp nz,disp_char_next
+151+  808E              ; 	inc a
+152+  808E              ; disp_char_next:
+153+  808E              ;     sub FONT_ASCII_OFFSET
+154+  808E              ;     push de
+155+  808E              ;     push hl
+156+  808E              ;     call PlotTile8
+157+  808E              ;     pop hl
+158+  808E              ;     pop de
+159+  808E
+160+  808E              ;     inc de
+161+  808E              ;     inc l
+162+  808E              ;     jp display_string
+163+  808E
+164+  808E
+165+  808E              ; display_numbers:
+166+  808E              ;     ld c,-100
+167+  808E              ;     call dispnums_add_offset
+168+  808E              ;     ld c,-10
+169+  808E              ;     call dispnums_add_offset
+170+  808E              ;     ld c,-1
+171+  808E              ; dispnums_add_offset:
+172+  808E              ;     ld b,FONT_START
+173+  808E              ; dispnums_inc:
+174+  808E              ;     inc b
+175+  808E              ;     add a,c
+176+  808E              ;     jr c, dispnums_inc
+177+  808E              ;     sub c ;actually adding (its holding minus number)
+178+  808E              ;     push af
+179+  808E              ;     ld a,b
+180+  808E              ;     push hl
+181+  808E              ;     call PlotTile8
+182+  808E              ;     pop hl
+183+  808E              ;     inc l
+184+  808E              ;     pop af
+185+  808E              ;     ret
+186+  808E
+187+  808E
+188+  808E
+189+  808E
+# file closed: src/retrotools/tools.asm
+ 43   808E              	include 'retrotools\keycacher.asm'
+# file opened: src/retrotools/keycacher.asm
+  1+  808E              ;Usage:
+  2+  808E              ;first call check_keys
+  3+  808E              ;compare states of cached values (eg. keypressed_W) before doing movement/actions etc.
+  4+  808E              ;after all actions, call reset_keys
+  5+  808E
+  6+  808E
+  7+  808E              ; 32766 B, N, M, Symbol Shift, Space
+  8+  808E              ; 49150 H, J, K, L, Enter
+  9+  808E              ; 57342 Y, U, I, O, P
+ 10+  808E              ; 61438 6, 7, 8, 9, 0
+ 11+  808E              ; 63486 5, 4, 3, 2, 1
+ 12+  808E              ; 64510 T, R, E, W, Q
+ 13+  808E              ; 65022 G, F, D, S, A
+ 14+  808E              ; 65278 V, C, X, Z, Caps Shift
+ 15+  808E
+ 16+  808E
+ 17+  808E 00           keypressed_W db FALSE
+ 18+  808F 00           keypressed_W_Held db FALSE
+ 19+  8090 00           keypressed_A db FALSE
+ 20+  8091 00           keypressed_A_Held db FALSE
+ 21+  8092 00           keypressed_S db FALSE
+ 22+  8093 00           keypressed_S_Held db FALSE
+ 23+  8094 00           keypressed_D db FALSE
+ 24+  8095
+ 25+  8095 00           keypressed_F db FALSE
+ 26+  8096 00           keypressed_F_Held db FALSE
+ 27+  8097 00           keypressed_I db FALSE
+ 28+  8098 00           keypressed_Q db FALSE
+ 29+  8099 00           keypressed_Q_Held db FALSE
+ 30+  809A 00           keypressed_O db FALSE
+ 31+  809B 00           keypressed_P db FALSE
+ 32+  809C 00           keypressed_Space db FALSE
+ 33+  809D 00           keypressed_Space_Held db FALSE
+ 34+  809E
+ 35+  809E              check_keys:
+ 36+  809E 3A 8E 80         ld a,(keypressed_W)
+ 37+  80A1 FE 01            cp TRUE
+ 38+  80A3 CC 56 81         call z,set_W_Held
+ 39+  80A6 C4 5C 81         call nz, reset_W_Held
+ 40+  80A9
+ 41+  80A9 3A 92 80         ld a,(keypressed_S)
+ 42+  80AC FE 01            cp TRUE
+ 43+  80AE CC 78 81         call z,set_S_Held
+ 44+  80B1 C4 7E 81         call nz, reset_S_Held
+ 45+  80B4
+ 46+  80B4 3A 95 80         ld a,(keypressed_F)
+ 47+  80B7 FE 01            cp TRUE
+ 48+  80B9 CC 8F 81         call z, set_F_Held
+ 49+  80BC C4 95 81         call nz, reset_F_Held
+ 50+  80BF
+ 51+  80BF 3A 90 80         ld a,(keypressed_A)
+ 52+  80C2 FE 01            cp TRUE
+ 53+  80C4 CC 67 81         call z,set_A_Held
+ 54+  80C7 C4 6D 81         call nz, reset_A_Held
+ 55+  80CA
+ 56+  80CA 3A 98 80         ld a,(keypressed_Q)
+ 57+  80CD FE 01            cp TRUE
+ 58+  80CF CC A6 81         call z,set_Q_Held
+ 59+  80D2 C4 AC 81         call nz, reset_Q_Held
+ 60+  80D5
+ 61+  80D5 3A 9C 80         ld a,(keypressed_Space)
+ 62+  80D8 FE 01            cp TRUE
+ 63+  80DA CC C3 81         call z,set_Space_Held
+ 64+  80DD C4 C9 81         call nz, reset_Space_Held
+ 65+  80E0
+ 66+  80E0
+ 67+  80E0
+ 68+  80E0 AF               xor a
+ 69+  80E1 32 8E 80         ld (keypressed_W),a
+ 70+  80E4 32 90 80         ld (keypressed_A),a
+ 71+  80E7 32 92 80         ld (keypressed_S),a
+ 72+  80EA 32 94 80         ld (keypressed_D),a
+ 73+  80ED 32 95 80         ld (keypressed_F),a
+ 74+  80F0 32 97 80         ld (keypressed_I),a
+ 75+  80F3 32 98 80         ld (keypressed_Q),a
+ 76+  80F6 32 9A 80         ld (keypressed_O),a
+ 77+  80F9 32 9B 80         ld (keypressed_P),a
+ 78+  80FC 32 9C 80         ld (keypressed_Space),a
+ 79+  80FF
+ 80+  80FF
+ 81+  80FF 01 FE FD         ld bc,0xFDFE ;ASDFG
+ 82+  8102 ED 78            in a,(c)
+ 83+  8104 1F               rra
+ 84+  8105 F5               push af
+ 85+  8106 D4 61 81         call nc, set_A
+ 86+  8109 F1               pop af
+ 87+  810A 1F               rra
+ 88+  810B F5               push af
+ 89+  810C D4 72 81         call nc, set_S
+ 90+  810F F1               pop af
+ 91+  8110 1F               rra
+ 92+  8111 F5               push af
+ 93+  8112 D4 83 81         call nc, set_D
+ 94+  8115 F1               pop af
+ 95+  8116 1F               rra
+ 96+  8117 F5               push af
+ 97+  8118 D4 89 81         call nc, set_F
+ 98+  811B F1               pop af
+ 99+  811C
+100+  811C 01 FE FB         ld bc,0xFBFE ;QWERT
+101+  811F ED 78            in a,(c)
+102+  8121 1F               rra ;Q
+103+  8122 F5               push af
+104+  8123 D4 A0 81         call nc, set_Q
+105+  8126 F1               pop af
+106+  8127 1F               rra ;W
+107+  8128 F5               push af
+108+  8129 D4 50 81         call nc, set_W
+109+  812C F1               pop af
+110+  812D
+111+  812D 01 FE DF         ld bc,0xDFFE ;POIUY
+112+  8130 ED 78            in a,(c)
+113+  8132 1F               rra ;P
+114+  8133 F5               push af
+115+  8134 D4 B7 81         call nc, set_P
+116+  8137 F1               pop af
+117+  8138 1F               rra ;O
+118+  8139 F5               push af
+119+  813A D4 B1 81         call nc, set_O
+120+  813D F1               pop af
+121+  813E 1F               rra ;I
+122+  813F F5               push af
+123+  8140 D4 9A 81         call nc, set_I
+124+  8143 F1               pop af
+125+  8144
+126+  8144 01 FE 7F         ld bc,32766
+127+  8147 ED 78            in a,(c)
+128+  8149 1F               rra
+129+  814A F5               push af
+130+  814B D4 BD 81         call nc, set_Space
+131+  814E F1               pop af
+132+  814F
+133+  814F
+134+  814F C9               ret
+135+  8150
+136+  8150              set_W:
+137+  8150 3E 01            ld a,TRUE
+138+  8152 32 8E 80         ld (keypressed_W),a
+139+  8155 C9               ret
+140+  8156
+141+  8156              set_W_Held:
+142+  8156 3E 01            ld a,TRUE
+143+  8158 32 8F 80         ld (keypressed_W_Held),a
+144+  815B C9               ret
+145+  815C              reset_W_Held:
+146+  815C AF               xor a
+147+  815D 32 8F 80         ld (keypressed_W_Held),a
+148+  8160 C9               ret
+149+  8161
+150+  8161              set_A:
+151+  8161 3E 01            ld a,TRUE
+152+  8163 32 90 80         ld (keypressed_A),a
+153+  8166 C9               ret
+154+  8167
+155+  8167              set_A_Held:
+156+  8167 3E 01            ld a,TRUE
+157+  8169 32 91 80         ld (keypressed_A_Held),a
+158+  816C C9               ret
+159+  816D
+160+  816D              reset_A_Held:
+161+  816D AF               xor a
+162+  816E 32 91 80         ld (keypressed_A_Held),a
+163+  8171 C9               ret
+164+  8172
+165+  8172              set_S:
+166+  8172 3E 01            ld a,TRUE
+167+  8174 32 92 80         ld (keypressed_S),a
+168+  8177 C9               ret
+169+  8178              set_S_Held:
+170+  8178 3E 01            ld a,TRUE
+171+  817A 32 93 80         ld (keypressed_S_Held),a
+172+  817D C9               ret
+173+  817E              reset_S_Held:
+174+  817E AF               xor a
+175+  817F 32 93 80         ld (keypressed_S_Held),a
+176+  8182 C9               ret
+177+  8183
+178+  8183              set_D:
+179+  8183 3E 01            ld a,TRUE
+180+  8185 32 94 80         ld (keypressed_D),a
+181+  8188 C9               ret
+182+  8189
+183+  8189              set_F:
+184+  8189 3E 01            ld a,TRUE
+185+  818B 32 95 80         ld (keypressed_F),a
+186+  818E C9               ret
+187+  818F
+188+  818F
+189+  818F              set_F_Held:
+190+  818F 3E 01            ld a,TRUE
+191+  8191 32 96 80         ld (keypressed_F_Held),a
+192+  8194 C9               ret
+193+  8195
+194+  8195              reset_F_Held:
+195+  8195 AF               xor a
+196+  8196 32 96 80         ld (keypressed_F_Held),a
+197+  8199 C9               ret
+198+  819A
+199+  819A
+200+  819A
+201+  819A              set_I:
+202+  819A 3E 01            ld a,TRUE
+203+  819C 32 97 80         ld (keypressed_I),a
+204+  819F C9               ret
+205+  81A0
+206+  81A0
+207+  81A0              set_Q:
+208+  81A0 3E 01            ld a,TRUE
+209+  81A2 32 98 80         ld (keypressed_Q),a
+210+  81A5 C9               ret
+211+  81A6
+212+  81A6              set_Q_Held:
+213+  81A6 3E 01            ld a,TRUE
+214+  81A8 32 99 80         ld (keypressed_Q_Held),a
+215+  81AB C9               ret
+216+  81AC
+217+  81AC              reset_Q_Held:
+218+  81AC AF               xor a
+219+  81AD 32 99 80         ld (keypressed_Q_Held),a
+220+  81B0 C9               ret
+221+  81B1
+222+  81B1              set_O:
+223+  81B1 3E 01            ld a,TRUE
+224+  81B3 32 9A 80         ld (keypressed_O),a
+225+  81B6 C9               ret
+226+  81B7
+227+  81B7              set_P:
+228+  81B7 3E 01            ld a,TRUE
+229+  81B9 32 9B 80         ld (keypressed_P),a
+230+  81BC C9               ret
+231+  81BD
+232+  81BD              set_Space:
+233+  81BD 3E 01            ld a,TRUE
+234+  81BF 32 9C 80         ld (keypressed_Space),a
+235+  81C2 C9               ret
+236+  81C3              set_Space_Held:
+237+  81C3 3E 01            ld a,TRUE
+238+  81C5 32 9D 80         ld (keypressed_Space_Held),a
+239+  81C8 C9               ret
+240+  81C9
+241+  81C9              reset_Space_Held:
+242+  81C9 AF               xor a
+243+  81CA 32 9D 80         ld (keypressed_Space_Held),a
+244+  81CD C9               ret
+245+  81CE
+# file closed: src/retrotools/keycacher.asm
+ 44   81CE              	include 'retrotools\spritetools.asm'
+# file opened: src/retrotools/spritetools.asm
+  1+  81CE              ; Sprite Attribute 0
+  2+  81CE              ;     X X X X X X X X
+  3+  81CE
+  4+  81CE              ; Sprite Attribute 1
+  5+  81CE              ;     Y Y Y Y Y Y Y Y
+  6+  81CE
+  7+  81CE              ; Sprite Attribute 2
+  8+  81CE              ;     P P P P XM YM R X8/PR
+  9+  81CE
+ 10+  81CE              ; Sprite Attribute 3
+ 11+  81CE              ;     V E N5 N4 N3 N2 N1 N0 (NNNNN=Pattern ID)
+ 12+  81CE
+ 13+  81CE              ; Sprite Attribute 4
+ 14+  81CE              ; A. Extended Anchor Sprite
+ 15+  81CE              ;     H N6 T X X Y Y Y8
+ 16+  81CE              ; B. Relative Sprite, Composite Type
+ 17+  81CE              ;     0 1 N6 X X Y Y PO
+ 18+  81CE              ; C. Relative Sprite, Unified Type
+ 19+  81CE              ;     0 1 N6 0 0 0 0 PO
+ 20+  81CE
+ 21+  81CE
+ 22+  81CE              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 23+  81CE              ;; Upload spritesheet to 16K FPGA Internal Memory
+ 24+  81CE              ;; Inputs: B=Sprite Count HL=Sprite data Ptr
+ 25+  81CE              ;; Outputs: none
+ 26+  81CE              ;; Destroys: A,BC,HL
+ 27+  81CE              ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+ 28+  81CE              sprites_init:
+ 29+  81CE C5           	push bc
+ 30+  81CF 3E 00        	ld a,0
+ 31+  81D1 01 3B 30     	ld bc,$303b
+ 32+  81D4 ED 79        	out (c),a
+ 33+  81D6 C1           	pop bc
+ 34+  81D7              is_loop:
+ 35+  81D7 C5           	push bc
+ 36+  81D8 01 5B 00     	ld bc,$005b
+ 37+  81DB ED B3        	otir
+ 38+  81DD C1           	pop bc
+ 39+  81DE 10 F7        	djnz is_loop
+ 40+  81E0 C9           	ret
+# file closed: src/retrotools/spritetools.asm
+ 45   81E1
+ 46   81E1              	include 'game.asm'
+# file opened: src/game.asm
+  1+  81E1 00           framecounter8 db 0
+  2+  81E2 00 00        framecounter16 dw 0
+  3+  81E4
+  4+  81E4              game_init:
+  5+  81E4                  ; call layer2_init
+  6+  81E4
+  7+  81E4 ED 91 15 0B      nextreg $15, %00001011 ;sprites/layers system register
+  8+  81E8 ED 91 43 30      nextreg $43, %00110000 ;enhanced ula control register
+  9+  81EC ED 91 68 80      nextreg $68, %10000000 ;ula control register
+ 10+  81F0
+ 11+  81F0 AF               xor a ;black
+ 12+  81F1 ED 92 4C         nextreg $4c,a ;tilemap transparency colour
+ 13+  81F4 ED 92 14         nextreg $14,a; global transparency colour
+ 14+  81F7
+ 15+  81F7 ED 91 56 0E      nextreg $56,14
+ 16+  81FB 06 01            ld b,SPRITE_COUNT
+ 17+  81FD 21 00 C0         ld hl,$c000
+ 18+  8200 CD CE 81         call sprites_init
+ 19+  8203
+ 20+  8203
+ 21+  8203
+ 22+  8203
+ 23+  8203
+ 24+  8203 C9               ret
+ 25+  8204
+ 26+  8204
+ 27+  8204              game_update:
+ 28+  8204 06 0B            ld b,11
+ 29+  8206 CD 34 80         call WaitRasterLine
+ 30+  8209
+ 31+  8209 3A E1 81         ld a,(framecounter8)
+ 32+  820C 3C               inc a
+ 33+  820D 32 E1 81         ld (framecounter8),a
+ 34+  8210
+ 35+  8210 2A E2 81         ld hl,(framecounter16)
+ 36+  8213 23               inc hl
+ 37+  8214 22 E2 81         ld (framecounter16),hl
+ 38+  8217
+ 39+  8217
+ 40+  8217 CD 9E 80         call check_keys
+ 41+  821A
+ 42+  821A
+ 43+  821A C9               ret
+ 44+  821B
+ 45+  821B              game_draw:
+ 46+  821B CD 25 82         call face_draw
+ 47+  821E C9               ret
+ 48+  821F
+ 49+  821F
+# file closed: src/game.asm
+ 47   821F              	include 'sprites\face.asm'
+# file opened: src/sprites/face.asm
+  1+  821F 20 00        face_x dw 32
+  2+  8221 20           face_y db 32
+  3+  8222 00           face_attr2 db 0
+  4+  8223 80           face_attr3 db %10000000
+  5+  8224
+  6+  8224 00           face_slot db 0
+  7+  8225
+  8+  8225              face_draw:
+  9+  8225 3A 24 82         ld a,(face_slot)
+ 10+  8228 ED 92 34         nextreg $34,a
+ 11+  822B
+ 12+  822B 2A 1F 82         ld hl,(face_x)
+ 13+  822E 7D               ld a,l
+ 14+  822F ED 92 35         nextreg $35,a
+ 15+  8232
+ 16+  8232 3A 21 82         ld a,(face_y)
+ 17+  8235 ED 92 36         nextreg $36,a
+ 18+  8238
+ 19+  8238 3A 22 82         ld a,(face_attr2)
+ 20+  823B 2A 1F 82         ld hl,(face_x)
+ 21+  823E B4               or h
+ 22+  823F ED 92 37         nextreg $37,a
+ 23+  8242
+ 24+  8242 3A 23 82         ld a,(face_attr3)
+ 25+  8245 ED 92 38         nextreg $38,a
+ 26+  8248
+ 27+  8248
+ 28+  8248 C9               ret
+ 29+  8249
+ 30+  8249
+# file closed: src/sprites/face.asm
+ 48   8249
+ 49   8249              	include 'loadbins.asm'
+# file opened: src/loadbins.asm
+  1+  8249
+  2+  8249
+  3+  8249              ;;;;;Tiles
+  4+  8249
+  5+  8249
+  6+  8249
+  7+  8249              ; TILE_DEFINITIONS_SIZE equ 2048
+  8+  8249
+  9+  8249              ; caveman_palette:
+ 10+  8249              ;     incbin 'assets/_filename_.nxp',0
+ 11+  8249
+ 12+  8249              ;     MMU 6,16
+ 13+  8249              ;     org $c000
+ 14+  8249
+ 15+  8249              ;     incbin 'assets/_filename_.til',0,TILE_DEFINITIONS_SIZE
+ 16+  8249
+ 17+  8249
+ 18+  8249              ; ; 	;courtesy of ped7g:
+ 19+  8249              ; ;     ; patch tile gfx with grid gfx
+ 20+  8249              ; ; tileN=1
+ 21+  8249              ; ;     DUP 128-tileN
+ 22+  8249              ; ;         ORG $C000 + tileN*32
+ 23+  8249              ; ;         DB $FF
+ 24+  8249              ; ;         DB {b $ } | $F0
+ 25+  8249              ; ;         ORG $C000 + tileN*32 + 1*4
+ 26+  8249              ; ;         DB {b $ } | $F0
+ 27+  8249              ; ;         ORG $C000 + tileN*32 + 2*4
+ 28+  8249              ; ;         DB {b $ } | $F0
+ 29+  8249              ; ;         ORG $C000 + tileN*32 + 6*4 + 3
+ 30+  8249              ; ;         DB {b $ } | $0F
+ 31+  8249              ; ;         ORG $C000 + tileN*32 + 7*4 + 3
+ 32+  8249              ; ;         DB $FF
+ 33+  8249              ; ; tileN=tileN+1
+ 34+  8249              ; ;     EDUP
+ 35+  8249
+ 36+  8249
+ 37+  8249
+ 38+  8249              ;;
+ 39+  8249              ;;Caveman Walk Animation:
+ 40+  8249              ; A>B>C>D>A>B>C>D
+ 41+  8249
+ 42+  8249              ;;;sprites
+ 43+  8249
+ 44+  8249              SPRITE_COUNT equ 1  ;<--- TOTAL SPRITE COUNT
+ 45+  8249
+ 46+  8249                  MMU 6,14
+ 47+  8249                  org $c000
+ 48+  C000
+ 49+  C000              face1:
+ 50+  C000 A0 A0 A0 A0  	db  $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0;
+ 50+  C004 A0 A0 A0 A0
+ 50+  C008 A0 A0 A0 A0
+ 50+  C00C A0 A0 A0 A0
+ 51+  C010 A0 A8 A8 A8  	db  $A0, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A0;
+ 51+  C014 A8 A8 A8 A8
+ 51+  C018 A8 A8 A8 A8
+ 51+  C01C A8 A8 A8 A0
+ 52+  C020 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 52+  C024 CC CC CC CC
+ 52+  C028 CC CC CC CC
+ 52+  C02C CC CC A8 A0
+ 53+  C030 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 53+  C034 61 61 CC CC
+ 53+  C038 CC CC 61 61
+ 53+  C03C CC CC A8 A0
+ 54+  C040 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 54+  C044 61 61 CC CC
+ 54+  C048 CC CC 61 61
+ 54+  C04C CC CC A8 A0
+ 55+  C050 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 55+  C054 61 61 CC CC
+ 55+  C058 CC CC 61 61
+ 55+  C05C CC CC A8 A0
+ 56+  C060 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $A8, $A0;
+ 56+  C064 61 61 CC CC
+ 56+  C068 CC CC 61 61
+ 56+  C06C CC CC A8 A0
+ 57+  C070 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 57+  C074 CC CC CC CC
+ 57+  C078 CC CC CC CC
+ 57+  C07C CC CC A8 A0
+ 58+  C080 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 58+  C084 CC CC CC CC
+ 58+  C088 CC CC CC CC
+ 58+  C08C CC CC A8 A0
+ 59+  C090 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $61, $61, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 59+  C094 CC CC CC 61
+ 59+  C098 61 CC CC CC
+ 59+  C09C CC CC A8 A0
+ 60+  C0A0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 60+  C0A4 CC CC CC CC
+ 60+  C0A8 CC CC CC CC
+ 60+  C0AC CC CC A8 A0
+ 61+  C0B0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 61+  C0B4 CC CC CC CC
+ 61+  C0B8 CC CC CC CC
+ 61+  C0BC CC CC A8 A0
+ 62+  C0C0 A0 A8 CC 61  	db  $A0, $A8, $CC, $61, $61, $61, $61, $61, $61, $61, $61, $61, $61, $CC, $A8, $A0;
+ 62+  C0C4 61 61 61 61
+ 62+  C0C8 61 61 61 61
+ 62+  C0CC 61 CC A8 A0
+ 63+  C0D0 A0 A8 CC CC  	db  $A0, $A8, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $CC, $A8, $A0;
+ 63+  C0D4 CC CC CC CC
+ 63+  C0D8 CC CC CC CC
+ 63+  C0DC CC CC A8 A0
+ 64+  C0E0 A0 A8 A8 A8  	db  $A0, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A8, $A0;
+ 64+  C0E4 A8 A8 A8 A8
+ 64+  C0E8 A8 A8 A8 A8
+ 64+  C0EC A8 A8 A8 A0
+ 65+  C0F0 A0 A0 A0 A0  	db  $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0, $A0;
+ 65+  C0F4 A0 A0 A0 A0
+ 65+  C0F8 A0 A0 A0 A0
+ 65+  C0FC A0 A0 A0 A0
+ 66+  C100
+ 67+  C100
+ 68+  C100              ;;;;;;Fonts
+ 69+  C100
+ 70+  C100
+ 71+  C100                  MMU 6,17
+ 72+  C100              	org 0xC000
+ 73+  C000
+ 74+  C000 00 00 00...  	ds 64,0
+ 75+  C040              	; incbin "fonts/font1.spr"
+ 76+  C040              	; incbin "fonts/font2.spr"
+ 77+  C040              	; incbin "fonts/font3.spr"
+ 78+  C040              	; incbin "fonts/font4.spr"
+ 79+  C040              	; incbin "fonts/font5.spr"
+ 80+  C040              	; incbin "fonts/font6.spr"
+ 81+  C040              	incbin "fonts/font7.spr"
+ 82+  D040              	; incbin "fonts/font8.spr"
+ 83+  D040              	; incbin "fonts/font9.spr"
+ 84+  D040              	; incbin "fonts/font10.spr"
+ 85+  D040              	; incbin "fonts/font11.spr"
+ 86+  D040              	; incbin "fonts/font12.spr"
+ 87+  D040              	; incbin "fonts/font13.spr"
+ 88+  D040              	; incbin "fonts/font14.spr"
+ 89+  D040              	; incbin "fonts/font15.spr"
+ 90+  D040              	; incbin "fonts/font16.spr"
+ 91+  D040              	; ; incbin "fonts/font17.spr"
+ 92+  D040              	; incbin "fonts/font18.spr" *not mapped same as others (?)
+ 93+  D040
+ 94+  D040
+ 95+  D040
+ 96+  D040
+ 97+  D040              ; ;; Layer2
+ 98+  D040
+ 99+  D040              ; 	MMU 7 n,40
+100+  D040              ; 	org $e000
+101+  D040              ; 	incbin "assets/skybigrotated.bmp", 1078
+# file closed: src/loadbins.asm
+ 50   D040
+ 51   D040
+ 52   D040
+ 53   D040              	SAVENEX OPEN "main.nex", start , stack_top
+ 54   D040                  SAVENEX CORE 3, 0, 0
+ 55   D040                  SAVENEX CFG 0, 0
+ 56   D040              	SAVENEX AUTO
+ 57   D040                  SAVENEX CLOSE
+ 58   D040
+ 59   D040
+ 60   D040
+# file closed: src/main.asm
